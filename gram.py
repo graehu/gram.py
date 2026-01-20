@@ -54,16 +54,16 @@ class EventText(tk.Text):
             if command in ("insert", "delete", "replace"):
                 if self.tree != None:
                     if command == "insert":
-                        start = self.count("1.0", args[0])[0]
+                        start = self.count("1.0", args[0])[0] if args[0] != "1.0" else 0
                         amount = len(args[1])
                         edits = [start, start, start+amount, (start, start), (start, start), (start, start+amount)]
                     elif command == "delete":
-                        start = self.count("1.0", args[0])[0]
-                        if len(args) > 1: amount = self.count("1.0", args[1])[0] - start
+                        start = self.count("1.0", args[0])[0] if args[0] != "1.0" else 0
+                        if len(args) > 1: amount = (self.count("1.0", args[1])[0] if args[0] != "1.0" else 0) - start
                         else: amount = 1
                         edits = [start, start+amount, start, (start, start), (start, start+amount), (start, start)]
                     if command in ["insert", "delete"]:
-                        fallback.start_byte = self.count("1.0", f"{args[0]}")[0]
+                        fallback.start_byte = self.count("1.0", f"{args[0]}")[0] if args[0] != "1.0" else 0
                         fallback.end_byte = fallback.start_byte
             result = self.tk.call(cmd)
             if command == "configure" and self.cursor_label: self.cursor_label.destroy(); self.cursor_label = None
