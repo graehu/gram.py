@@ -11,6 +11,7 @@ class EventText(tk.Text):
     tag_queue = None
     path = name = ext = ""
     edits = extern_edits = read_only = False
+    allow_parse = True
     mtime = tag_line = lines = 0
     cursor_label = None
     text = highlights = language = parser = tree = changes = None
@@ -42,6 +43,7 @@ class EventText(tk.Text):
         self.lock = threading.Lock()
         self.changes = []
         self.tag_queue = []
+        self.allow_parse = True
     class Range:
         start_byte=0
         end_byte=0
@@ -70,7 +72,7 @@ class EventText(tk.Text):
             if self.read_only and " ".join((command, *args)).startswith("mark set insert"):
                 if self.cursor_label == None:
                     self.cursor_label = tk.Frame(root, height=self.text_config["font"][1]*2, width=2)
-                if bbox :=self.bbox(tk.INSERT):
+                if bbox := self.bbox(tk.INSERT):
                     x1, y1 = bbox[:2]
                     self.cursor_label.place(x=x1, y=y1)
             
@@ -78,7 +80,7 @@ class EventText(tk.Text):
             if debug_output: print(cmd)
             if command in ("insert", "delete", "replace"):
                 self.text = self.get("1.0", "end - 1c")
-                if edits:
+                if edits and self.allow_parse:
                     self.tree.edit(*edits)
                     new_tree = self.parser.parse(self.text.encode(), self.tree)
                     changes = self.tree.get_changed_ranges(new_tree)
@@ -1033,7 +1035,9 @@ def watch_file():
                     editor.mtime = mtime
                     ins = editor.index(tk.INSERT); end = editor.index(tk.END+" - 1c")
                     if editor.read_only: editor.configure(state=tk.NORMAL)
+                    editor.allow_parse = False
                     editor.delete("1.0", tk.END)
+                    editor.allow_parse = True
                     editor.insert(tk.END, open(editor.path).read())
                     if editor.compare(ins, ">=", end): editor.mark_set(tk.INSERT, tk.END)
                     else: editor.mark_set(tk.INSERT, ins)
