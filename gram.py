@@ -5,6 +5,8 @@ import tkinter.font as tkfont
 try: import tree_sitter
 except: pass
 
+# wow this is interesting
+
 class EventText(tk.Text):
     event_args = None
     text_config = {}
@@ -56,16 +58,21 @@ class EventText(tk.Text):
             if command in ("insert", "delete", "replace"):
                 if self.tree != None:
                     if command == "insert":
-                        start = self.count("1.0", args[0])[0] if args[0] != "1.0" else 0
+                        count = self.count("1.0", args[0])
+                        start =  count[0] if count else 0
                         amount = len(args[1])
                         edits = [start, start, start+amount, (start, start), (start, start), (start, start+amount)]
                     elif command == "delete":
-                        start = self.count("1.0", args[0])[0] if args[0] != "1.0" else 0
-                        if len(args) > 1: amount = (self.count("1.0", args[1])[0] if args[0] != "1.0" else 0) - start
+                        count = self.count("1.0", args[0])
+                        start =  count[0] if count else 0
+                        if len(args) > 1:
+                            count = self.count("1.0", args[1])
+                            amount = (count[0] if count else 0) - start
                         else: amount = 1
                         edits = [start, start+amount, start, (start, start), (start, start+amount), (start, start)]
                     if command in ["insert", "delete"]:
-                        fallback.start_byte = self.count("1.0", f"{args[0]}")[0] if args[0] != "1.0" else 0
+                        count = self.count("1.0", f"{args[0]}")
+                        fallback.start_byte = count[0] if count else 0
                         fallback.end_byte = fallback.start_byte
             result = self.tk.call(cmd)
             if command == "configure" and self.cursor_label: self.cursor_label.destroy(); self.cursor_label = None
@@ -79,20 +86,24 @@ class EventText(tk.Text):
 
             if debug_output: print(cmd)
             if command in ("insert", "delete", "replace"):
+                if edits: self.tree.edit(*edits)
+                
                 self.text = self.get("1.0", "end - 1c")
+                # todo: instead of checking if allow edits, maybe only parse on insert?
                 if edits and self.allow_parse:
-                    self.tree.edit(*edits)
+                    # this will be before the edits happen... HMMM
                     new_tree = self.parser.parse(self.text.encode(), self.tree)
                     changes = self.tree.get_changed_ranges(new_tree)
                     if not changes: changes.append(fallback)
-                    self.changes.extend(changes)
+                    self.changes += changes
                     self.tree = new_tree
+                
                 self.event_args = args
                 self.event_generate("<<TextModified>>")
-            # if command in ("yview", "xview"):
-            #     self.event_generate("<<ViewUpdated>>")
+                # if command in ("yview", "xview"):
+                #     self.event_generate("<<ViewUpdated>>")
         except Exception as e:
-            print(e, file=sys.stderr)
+            print("EventText: "+str(e), file=sys.stderr)
 
         return result
 
@@ -228,7 +239,7 @@ def apply_config(widget):
         config["regexs"].append(r"\b(?P<links>(file://|https?://)[^\s]*)\b")
         config["regexs"] = [re.compile(r, re.S) for r in config["regexs"]]
     except Exception as e:
-        print(e, file=sys.stderr)
+        print("apply_config: "+str(e), file=sys.stderr)
 
 
 def update_title(widget):
@@ -587,6 +598,10 @@ def update_tags(widget: EventText):
         tag_names = widget.tag_names()
         changes = widget.changes
         tags = {}
+        def node_changed(node, change):
+            ret = change.start_byte <= node.start_byte and change.end_byte >= node.end_byte
+            ret = ret or change.start_byte >= node.start_byte and change.end_byte <= node.end_byte
+            return ret
         if debug_it: start = time.time()
         if widget.language == None: init_treesitter(widget)
         if widget.highlights:
@@ -595,8 +610,7 @@ def update_tags(widget: EventText):
             if changes:
                 for change in changes:
                     for child in tree_root.children:
-                        if change.start_byte <= child.start_byte and change.end_byte >= child.end_byte or \
-                            change.start_byte >= child.start_byte and change.end_byte <= child.end_byte:
+                        if node_changed(child, change):
                             nodes.append(child)
                             if debug_it: print(f"node: {child}", file=sys.__stdout__)
             else:
@@ -852,7 +866,7 @@ def cmd_cache_matches(text):
 
 def cmd_exec(text):
     try: exec(text, globals(), locals())
-    except Exception as e: print(e)
+    except Exception as e: print("cmd_exec: "+str(e))
 
 
 def cmd_open(text, new_instance=False):
@@ -1059,7 +1073,7 @@ def watch_file():
             do_update = True
         if do_update: update_tags(editor)
     except Exception as e:
-        print(e, file=sys.stderr)
+        print("watch: "+str(e), file=sys.stderr)
     root.after(update_time, watch_file)
 
 watch_file()
