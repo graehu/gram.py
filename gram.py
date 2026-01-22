@@ -4,8 +4,16 @@ import tkinter as tk
 import tkinter.font as tkfont
 try: import tree_sitter
 except: pass
-
-# wow this is interesting
+try: import tree_sitter_python
+except: pass
+try: import tree_sitter_c
+except: pass
+try: import tree_sitter_cpp
+except: pass
+try: import tree_sitter_json
+except: pass
+try: import tree_sitter_markdown
+except: pass
 
 class EventText(tk.Text):
     event_args = None
@@ -84,16 +92,17 @@ class EventText(tk.Text):
                     self.cursor_label.place(x=x1, y=y1)
             
 
-            if debug_output: print(cmd)
+            if debug_output: print(cmd, file=sys.stdout)
             if command in ("insert", "delete", "replace"):
                 if edits: self.tree.edit(*edits)
                 
                 self.text = self.get("1.0", "end - 1c")
                 # todo: instead of checking if allow edits, maybe only parse on insert?
                 if edits and self.allow_parse:
-                    # this will be before the edits happen... HMMM
                     new_tree = self.parser.parse(self.text.encode(), self.tree)
-                    changes = self.tree.get_changed_ranges(new_tree)
+                    changes = self.tree.changed_ranges(new_tree)
+                    print("--whut--", file=sys.stdout)
+                    print(changes, file=sys.stdout)
                     if not changes: changes.append(fallback)
                     self.changes += changes
                     self.tree = new_tree
@@ -549,40 +558,31 @@ def find_all(text):
 def init_treesitter(widget: EventText):
     try:
         text = widget.text
-        dir = os.path.expanduser(config["tree-sitter"]["search_path"])
+        dire = os.path.expanduser(config["tree-sitter"]["search_path"])
         sitter = "tree-sitter-"
-        sitter_dll = "/".join([_grampy_dir, "treesitter.dll"])
-        languages = {d.replace(sitter, ""):{"path":dir+d, "info":json.load(open(dir+d+"/package.json"))} for d in os.listdir(dir) if d.startswith(sitter)}
-        tree_sitter.Language.build_library(sitter_dll, [l["path"] for _,l in languages.items()])
         
         def get_language(path):
             _, ext = os.path.splitext(path)
             ext = ext[1:]
-            for k,v in languages.items():
-                infos = v["info"]["tree-sitter"]
-                for info in infos:
-                    exts = info["file-types"]
-                    if ext in exts: return tree_sitter.Language(sitter_dll, k)
-        
+            try:
+                if ext == "py": return tree_sitter.Language(tree_sitter_python.language())
+                elif ext in ["cpp", "hpp"]: return tree_sitter.Language(tree_sitter_cpp.language())
+                elif ext in ["c", "h"]: return tree_sitter.Language(tree_sitter_c.language())
+                elif ext in ["json"]: return tree_sitter.Language(tree_sitter_json.language())
+                elif ext in ["md"]: return tree_sitter.Language(tree_sitter_markdown.language())
+            except Exception as e:
+                print(widget.path+" tree-sitter error: "+str(e), file=sys.__stdout__)
+            return None
+
+              
         def get_highlights(name):
-            highlights = []
-            if name in languages:
-                infos = languages[name]["info"]["tree-sitter"]
-                for info in infos:
-                    if "highlights" in info:
-                        for highlight in info["highlights"]:
-                            if sitter in highlight:
-                                highlights.append(dir+sitter+highlight.split(sitter, maxsplit=1)[1])
-                            elif highlight.startswith("queries"):
-                                highlights.append(dir+sitter+name+"/"+highlight)
-                    else:
-                        highlights = [f"{dir}{sitter}{name}/queries/highlights.scm"]
-            return highlights
+            return [f"{dire}{sitter}{name}/queries/highlights.scm"]
+        
         lang = get_language(widget.path)
         if lang:
             widget.language = lang
             widget.highlights = get_highlights(lang.name)
-            parser = tree_sitter.Parser(); parser.set_language(lang)
+            parser = tree_sitter.Parser(lang)
             widget.parser = parser
             widget.tree = parser.parse(text.encode())
             
@@ -623,18 +623,22 @@ def update_tags(widget: EventText):
                     for node in nodes:
                         if debug_it: q_start = time.time()
                         query = widget.language.query(highlight)
+                        captures = []
+                        qcaptures = tree_sitter.QueryCursor(query)
                         for change in changes:
-                            captures = query.captures(node, start_byte=change.start_byte, end_byte=change.end_byte)
+                            qcaptures.set_byte_range(change.start_byte, change.end_byte)
+                            captures.append(qcaptures.captures(node))
                         else:
-                            captures = query.captures(node)
+                            captures = [qcaptures.captures(node)]
                         if debug_it: print(f"treesitter_query: {time.time()-q_start}", file=sys.__stdout__)
                         if debug_it: q_start = time.time()
                         tid = lambda y: f"{y[0]+1}.{y[1]}"
-                        
-                        for info, key in captures:
-                            if not key in config["tags"]: continue
-                            if not key in tags: tags[key] = [[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]]
-                            else: tags[key].extend([[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]])
+                        for capture in captures:
+                            for key, values in capture.items():
+                                if not key in config["tags"]: continue
+                                for info in values:
+                                    if not key in tags: tags[key] = [[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]]
+                                    else: tags[key].extend([[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]])
                         if debug_it: print(f"treesitter_spans: {time.time()-q_start}", file=sys.__stdout__)
         if debug_it: print(f"treesitter: {time.time()-start}", file=sys.__stdout__)
 
