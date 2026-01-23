@@ -15,6 +15,8 @@ try: import tree_sitter_json; tree_sitter_langs["json"] = tree_sitter.Language(t
 except: pass
 try: import tree_sitter_markdown; tree_sitter_langs["markdown"] = tree_sitter.Language(tree_sitter_markdown.language())
 except: pass
+try: import tree_sitter_toml; tree_sitter_langs["toml"] = tree_sitter.Language(tree_sitter_toml.language())
+except: pass
 
 class EventText(tk.Text):
     event_args = None
@@ -568,6 +570,7 @@ def init_treesitter(widget: EventText):
             elif ext in ["c", "h"]: return tree_sitter_langs["c"]
             elif ext in ["json"]: return tree_sitter_langs["json"]
             elif ext in ["md"]: return tree_sitter_langs["markdown"]
+            elif ext in ["toml"]: return tree_sitter_langs["toml"]
             return None
               
         def get_highlights(name):
