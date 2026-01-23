@@ -2,17 +2,18 @@
 import re, os, sys, ast, glob, json, time, zlib, fnmatch, subprocess, threading, webbrowser, pickle, shutil
 import tkinter as tk
 import tkinter.font as tkfont
+tree_sitter_langs = {}
 try: import tree_sitter
 except: pass
-try: import tree_sitter_python
+try: import tree_sitter_python; tree_sitter_langs["python"] = tree_sitter.Language(tree_sitter_python.language())
 except: pass
-try: import tree_sitter_c
+try: import tree_sitter_c; tree_sitter_langs["c"] = tree_sitter.Language(tree_sitter_c.language())
 except: pass
-try: import tree_sitter_cpp
+try: import tree_sitter_cpp; tree_sitter_langs["cpp"] = tree_sitter.Language(tree_sitter_cpp.language())
 except: pass
-try: import tree_sitter_json
+try: import tree_sitter_json; tree_sitter_langs["json"] = tree_sitter.Language(tree_sitter_json.language())
 except: pass
-try: import tree_sitter_markdown
+try: import tree_sitter_markdown; tree_sitter_langs["markdown"] = tree_sitter.Language(tree_sitter_markdown.language())
 except: pass
 
 class EventText(tk.Text):
@@ -101,8 +102,6 @@ class EventText(tk.Text):
                 if edits and self.allow_parse:
                     new_tree = self.parser.parse(self.text.encode(), self.tree)
                     changes = self.tree.changed_ranges(new_tree)
-                    print("--whut--", file=sys.stdout)
-                    print(changes, file=sys.stdout)
                     if not changes: changes.append(fallback)
                     self.changes += changes
                     self.tree = new_tree
@@ -148,7 +147,7 @@ config = {
         "function.builtin": { "foreground": "lightgoldenrod" },
         "constant.builtin": { "foreground": "skyblue" },
         "punctuation.delimiter": { "foreground": "grey90" },
-        "punctuation.special": { "foreground": "grey90" },
+        "punctuation.special": { "foreground": "skyblue" },
         "embedded": { "foreground": "grey90" },
         "string.special": { "foreground": "limegreen" },
         "tag": { "foreground": "blue" },
@@ -559,29 +558,33 @@ def init_treesitter(widget: EventText):
     try:
         text = widget.text
         dire = os.path.expanduser(config["tree-sitter"]["search_path"])
-        sitter = "tree-sitter-"
+        
         
         def get_language(path):
             _, ext = os.path.splitext(path)
             ext = ext[1:]
-            try:
-                if ext == "py": return tree_sitter.Language(tree_sitter_python.language())
-                elif ext in ["cpp", "hpp"]: return tree_sitter.Language(tree_sitter_cpp.language())
-                elif ext in ["c", "h"]: return tree_sitter.Language(tree_sitter_c.language())
-                elif ext in ["json"]: return tree_sitter.Language(tree_sitter_json.language())
-                elif ext in ["md"]: return tree_sitter.Language(tree_sitter_markdown.language())
-            except Exception as e:
-                print(widget.path+" tree-sitter error: "+str(e), file=sys.__stdout__)
+            if ext in ["py"]: return tree_sitter_langs["python"]
+            elif ext in ["cpp", "hpp"]: return tree_sitter_langs["cpp"]
+            elif ext in ["c", "h"]: return tree_sitter_langs["c"]
+            elif ext in ["json"]: return tree_sitter_langs["json"]
+            elif ext in ["md"]: return tree_sitter_langs["markdown"]
             return None
-
               
         def get_highlights(name):
-            return [f"{dire}{sitter}{name}/queries/highlights.scm"]
+            # print(name, file=sys.__stdout__)
+            if name == None: name = "cpp" # hack here because cpp name is returning None.
+            sitter = f"tree-sitter-{name}"
+            return [f"{dire}{sitter}/queries/highlights.scm",
+                    f"{dire}{sitter}/queries/tags.scm",
+                    f"{dire}{sitter}/queries/injections.scm"]
         
         lang = get_language(widget.path)
         if lang:
             widget.language = lang
             widget.highlights = get_highlights(lang.name)
+            for highlight in widget.highlights:
+                if not os.path.exists(highlight):
+                    print(f"{widget.path} tree-sitter error: not found - {highlight}", file=sys.__stdout__)
             parser = tree_sitter.Parser(lang)
             widget.parser = parser
             widget.tree = parser.parse(text.encode())
@@ -622,20 +625,27 @@ def update_tags(widget: EventText):
                 if highlight:
                     for node in nodes:
                         if debug_it: q_start = time.time()
-                        query = widget.language.query(highlight)
                         captures = []
-                        qcaptures = tree_sitter.QueryCursor(query)
-                        for change in changes:
-                            qcaptures.set_byte_range(change.start_byte, change.end_byte)
-                            captures.append(qcaptures.captures(node))
-                        else:
-                            captures = [qcaptures.captures(node)]
+                        try:
+                            query = tree_sitter.Query(widget.language, highlight)
+                            qcaptures = tree_sitter.QueryCursor(query)
+                            for change in changes:
+                                qcaptures.set_byte_range(change.start_byte, change.end_byte)
+                                captures.append(qcaptures.captures(node))
+                            else:
+                                captures = [qcaptures.captures(node)]
+                        except tree_sitter.QueryError as e:
+                            print(e, file=sys.__stdout__)
+                            pass
+
                         if debug_it: print(f"treesitter_query: {time.time()-q_start}", file=sys.__stdout__)
                         if debug_it: q_start = time.time()
                         tid = lambda y: f"{y[0]+1}.{y[1]}"
                         for capture in captures:
                             for key, values in capture.items():
-                                if not key in config["tags"]: continue
+                                if not key in config["tags"]:
+                                    if debug_it: print(f"treesitter_tags: missing key '{key}'", file=sys.__stderr__)
+                                    continue
                                 for info in values:
                                     if not key in tags: tags[key] = [[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]]
                                     else: tags[key].extend([[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]])
@@ -667,7 +677,7 @@ def update_tags(widget: EventText):
                 print("changes: ", file=sys.__stdout__)
                 for change in changes: print(widget.get(f"1.0 +{change.start_byte}c", f"1.0 + {change.end_byte}c"), file=sys.__stdout__)
                 print("tags: ", file=sys.__stdout__)
-                for k,v in tags.items(): print(f"\t{k}: {len(v)}", file=sys.__stdout__)
+                for k,v in tags.items(): print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
             new_tags = []
             for tag, spans in tags.items():
                 for change in changes:
@@ -679,7 +689,7 @@ def update_tags(widget: EventText):
             if debug_it:
                 print("full parse: ", file=sys.__stdout__)
                 print("tags: ", file=sys.__stdout__)
-                for k,v in tags.items(): print(f"\t{k}: {len(v)}", file=sys.__stdout__)
+                for k,v in tags.items(): print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
             widget.tag_queue = []
             for tag, spans in tags.items():
                 widget.tag_queue.append(lambda x=widget, y=tag: x.tag_remove(y, "1.0", "end-1c"))
