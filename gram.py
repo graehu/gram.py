@@ -153,6 +153,8 @@ config = {
         "embedded": { "foreground": "grey90" },
         "string.special": { "foreground": "limegreen" },
         "tag": { "foreground": "blue" },
+        "text.title": { "foreground": "skyblue" },
+        "text.literal": { "foreground": "limegreen" },
         "type.builtin": { "foreground": "skyblue" },
         "embedded": { "foreground": "grey" },
         "variable.builtin": { "foreground": "limegreen" },
@@ -598,7 +600,7 @@ def init_treesitter(widget: EventText):
 
 def update_tags(widget: EventText):
     def internal_update(widget: EventText):
-        debug_it = False
+        debug_it = True
         if debug_it: print(widget.name.center(64,"-"), file=sys.__stdout__)
         text = widget.text
         tag_names = widget.tag_names()
