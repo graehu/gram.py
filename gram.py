@@ -2,20 +2,8 @@
 import re, os, sys, ast, glob, json, time, zlib, fnmatch, subprocess, threading, webbrowser, pickle, shutil
 import tkinter as tk
 import tkinter.font as tkfont
-tree_sitter_langs = {}
+import importlib
 try: import tree_sitter
-except: pass
-try: import tree_sitter_python; tree_sitter_langs["python"] = tree_sitter.Language(tree_sitter_python.language())
-except: pass
-try: import tree_sitter_c; tree_sitter_langs["c"] = tree_sitter.Language(tree_sitter_c.language())
-except: pass
-try: import tree_sitter_cpp; tree_sitter_langs["cpp"] = tree_sitter.Language(tree_sitter_cpp.language())
-except: pass
-try: import tree_sitter_json; tree_sitter_langs["json"] = tree_sitter.Language(tree_sitter_json.language())
-except: pass
-try: import tree_sitter_markdown; tree_sitter_langs["markdown"] = tree_sitter.Language(tree_sitter_markdown.language())
-except: pass
-try: import tree_sitter_toml; tree_sitter_langs["toml"] = tree_sitter.Language(tree_sitter_toml.language())
 except: pass
 
 class EventText(tk.Text):
@@ -165,7 +153,8 @@ config = {
         "module": { "foreground": "purple" },
         "operator": { "foreground": "grey90" },
         "keyword": { "foreground": "hotpink1" },
-        "constructor": { "foreground": "skyblue" }
+        "constructor": { "foreground": "skyblue" },
+        "none": {}
     }
 }
 
@@ -557,51 +546,45 @@ def find_all(text):
     def do_work(): share_work(find_worker, args, log_file=log_file, max_threads=128)
     threading.Thread(target=do_work).start()
 
-
-def init_treesitter(widget: EventText):
+def get_treesitter_language(ext="", name=""):
     try:
-        text = widget.text
-        dire = os.path.expanduser(config["tree-sitter"]["search_path"])
-        
-        
-        def get_language(path):
-            _, ext = os.path.splitext(path)
-            ext = ext[1:]
+        if ext:
             if ext in ["py"]: return tree_sitter_langs["python"]
             elif ext in ["cpp", "hpp"]: return tree_sitter_langs["cpp"]
             elif ext in ["c", "h"]: return tree_sitter_langs["c"]
             elif ext in ["json"]: return tree_sitter_langs["json"]
             elif ext in ["md"]: return tree_sitter_langs["markdown"]
             elif ext in ["toml"]: return tree_sitter_langs["toml"]
-            return None
-              
-        def get_highlights(name):
-            # print(name, file=sys.__stdout__)
-            if name == None: name = "cpp" # hack here because cpp name is returning None.
-            sitter = f"tree-sitter-{name}"
-            return [f"{dire}{sitter}/queries/highlights.scm",
-                    f"{dire}{sitter}/queries/tags.scm",
-                    f"{dire}{sitter}/queries/injections.scm"]
         
-        lang = get_language(widget.path)
+        if name:
+            return tree_sitter_langs[name]
+    except: pass
+    return None
+
+def init_treesitter(widget: EventText):
+    try:
+        text = widget.text      
+        _, ext = os.path.splitext(widget.path)
+        ext = ext[1:]
+        lang = get_treesitter_language(ext=ext)
         if lang:
+            lang = lang["language"]
             widget.language = lang
-            widget.highlights = get_highlights(lang.name)
-            for highlight in widget.highlights:
-                if not os.path.exists(highlight):
-                    print(f"{widget.path} tree-sitter error: not found - {highlight}", file=sys.__stdout__)
-            parser = tree_sitter.Parser(lang)
+            widget.highlights = tree_sitter_langs[lang.name]["highlights"]
+            parser = tree_sitter_langs[lang.name]["parser"]
             widget.parser = parser
             widget.tree = parser.parse(text.encode())
             
     except Exception as e:
         print(widget.path+" tree-sitter error: "+str(e), file=sys.__stdout__)
 
+def printstdout(msg): print(msg, file=sys.__stdout__)
+def printstderr(msg): print(msg, file=sys.__stdout__)
 
 def update_tags(widget: EventText):
     def internal_update(widget: EventText):
         debug_it = True
-        if debug_it: print(widget.name.center(64,"-"), file=sys.__stdout__)
+        if debug_it: printstdout(widget.name.center(64,"-"))
         text = widget.text
         tag_names = widget.tag_names()
         changes = widget.changes
@@ -620,19 +603,17 @@ def update_tags(widget: EventText):
                     for child in tree_root.children:
                         if node_changed(child, change):
                             nodes.append(child)
-                            if debug_it: print(f"node: {child}", file=sys.__stdout__)
+                            if debug_it: printstdout(f"node: {child}")
             else:
                 nodes.append(tree_root)
             
-            for highlight in widget.highlights:
-                if os.path.exists(highlight): highlight = open(highlight).read()
-                else: highlight = None
-                if highlight:
+            def build_captures(language, highlights, nodes):
+                for highlight in highlights:
                     for node in nodes:
                         if debug_it: q_start = time.time()
                         captures = []
                         try:
-                            query = tree_sitter.Query(widget.language, highlight)
+                            query = tree_sitter.Query(language, highlight)
                             qcaptures = tree_sitter.QueryCursor(query)
                             for change in changes:
                                 qcaptures.set_byte_range(change.start_byte, change.end_byte)
@@ -640,22 +621,32 @@ def update_tags(widget: EventText):
                             else:
                                 captures = [qcaptures.captures(node)]
                         except tree_sitter.QueryError as e:
-                            print(e, file=sys.__stdout__)
+                            printstdout(e)
                             pass
 
-                        if debug_it: print(f"treesitter_query: {time.time()-q_start}", file=sys.__stdout__)
+                        if debug_it: printstdout(f"treesitter_query: {time.time()-q_start}")
                         if debug_it: q_start = time.time()
                         tid = lambda y: f"{y[0]+1}.{y[1]}"
                         for capture in captures:
                             for key, values in capture.items():
                                 if not key in config["tags"]:
-                                    if debug_it: print(f"treesitter_tags: missing key '{key}'", file=sys.__stderr__)
+                                    if key == "injection.content":
+                                        printstdout(f"content:")
+                                        printstdout(f"{capture[key]}")
+                                        pass
+                                    if key == "injection.language":
+                                        printstdout(f"language:")
+                                        printstdout(f"{capture[key]}")
+                                        pass
+                                    if debug_it: printstderr(f"treesitter_tags: missing key '{key}'")
                                     continue
                                 for info in values:
                                     if not key in tags: tags[key] = [[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]]
                                     else: tags[key].extend([[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]])
-                        if debug_it: print(f"treesitter_spans: {time.time()-q_start}", file=sys.__stdout__)
-        if debug_it: print(f"treesitter: {time.time()-start}", file=sys.__stdout__)
+                        if debug_it: printstdout(f"treesitter_spans: {time.time()-q_start}")
+            build_captures(widget.language, widget.highlights, nodes)
+
+        if debug_it: printstdout(f"treesitter: {time.time()-start}")
 
         if debug_it: start = time.time()
 
@@ -682,7 +673,8 @@ def update_tags(widget: EventText):
                 print("changes: ", file=sys.__stdout__)
                 for change in changes: print(widget.get(f"1.0 +{change.start_byte}c", f"1.0 + {change.end_byte}c"), file=sys.__stdout__)
                 print("tags: ", file=sys.__stdout__)
-                for k,v in tags.items(): print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
+                for k,v in tags.items():
+                    if v: print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
             new_tags = []
             for tag, spans in tags.items():
                 for change in changes:
@@ -694,7 +686,8 @@ def update_tags(widget: EventText):
             if debug_it:
                 print("full parse: ", file=sys.__stdout__)
                 print("tags: ", file=sys.__stdout__)
-                for k,v in tags.items(): print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
+                for k,v in tags.items():
+                    if v: print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
             widget.tag_queue = []
             for tag, spans in tags.items():
                 widget.tag_queue.append(lambda x=widget, y=tag: x.tag_remove(y, "1.0", "end-1c"))
@@ -1036,6 +1029,38 @@ palette.bind("<Down>", lambda x: (complist.focus_set(), complist.select_set(0)) 
 palette.configure(borderwidth=0)
 palette.pack(fill="x")
 apply_config(editor)
+tree_sitter_langs = {}
+def setup_treesitter_language(name):
+    try:
+        mod = importlib.import_module("tree_sitter_"+name)
+        dire = os.path.expanduser(config["tree-sitter"]["search_path"])
+        sitter = f"tree-sitter-{name}"
+        highlights = [
+            f"{dire}{sitter}/queries/highlights.scm",
+            f"{dire}{sitter}/queries/tags.scm",
+            f"{dire}{sitter}/queries/injections.scm"
+        ]
+        
+        for highlight in highlights:
+            if not os.path.exists(highlight):
+                print(f"tree-sitter error: not found - {highlight}", file=sys.__stdout__)
+        highlights = [open(h).read() for h in highlights if os.path.exists(h)]
+        language = tree_sitter.Language(mod.language())
+        tree_sitter_langs[name] = {
+            "language": language,
+            "highlights": highlights,
+            "parser": tree_sitter.Parser(language)
+            }
+        print("imported "+"tree_sitter_"+name)
+    except: pass
+
+setup_treesitter_language("python")
+setup_treesitter_language("c")
+setup_treesitter_language("cpp")
+setup_treesitter_language("json")
+setup_treesitter_language("markdown")
+setup_treesitter_language("toml")
+
 os.chdir(os.path.expanduser("~"))
 if args and os.path.exists(args[0]): file_open(args[0])
 else:
