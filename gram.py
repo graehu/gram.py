@@ -15,7 +15,7 @@ class EventText(tk.Text):
     allow_parse = True
     mtime = tag_line = lines = 0
     cursor_label = None
-    text = highlights = language = parser = tree = changes = None
+    text = tree_tags = injections = highlights = language = parser = tree = changes = None
     lock = None
     def __init__(self, *args, **kwargs):
         tk.Text.__init__(self, *args, **kwargs)
@@ -559,27 +559,29 @@ def find_all(text):
 tree_sitter_langs = {}
 def setup_treesitter_language(name):
     try:
-        mod = importlib.import_module("tree_sitter_"+name)
+        mod = importlib.import_module(f"tree_sitter_{name}")
         dire = os.path.expanduser(config["tree-sitter"]["search_path"])
         sitter = f"tree-sitter-{name}"
-        highlights = [
-            f"{dire}{sitter}/queries/highlights.scm",
-            f"{dire}{sitter}/queries/tags.scm",
-            f"{dire}{sitter}/queries/injections.scm"
-        ]
+
+        highlights = f"{dire}{sitter}/queries/highlights.scm"
+        injections = f"{dire}{sitter}/queries/injections.scm"
+        tree_tags = f"{dire}{sitter}/queries/tags.scm" 
         
-        for highlight in highlights:
-            if not os.path.exists(highlight):
-                print(f"tree-sitter error: not found - {highlight}", file=sys.__stdout__)
-        highlights = [open(h).read() for h in highlights if os.path.exists(h)]
+        highlights = open(highlights).read() if os.path.exists(highlights) else None
+        injections = open(injections).read() if os.path.exists(injections) else None
+        tree_tags = open(tree_tags).read() if os.path.exists(tree_tags) else None
+        
         language = tree_sitter.Language(mod.language())
         tree_sitter_langs[name] = {
             "language": language,
             "highlights": highlights,
+            "injections": injections,
+            "tags": tree_tags,
             "parser": tree_sitter.Parser(language)
             }
-        print("imported "+"tree_sitter_"+name)
-    except: pass
+        print(f"tree_sitter_{name}: {'highlights' if highlights else ''} {'injects' if injections else ''} {'tags' if tree_tags else ''}")
+    except Exception as e:
+        print(f"tree_sitter_{name} failed: {e}")
 
 
 def get_treesitter_language(ext="", name=""):
@@ -606,6 +608,8 @@ def init_treesitter(widget: EventText):
         if lang: 
             widget.language = lang["language"]
             widget.highlights = lang["highlights"]
+            widget.injections = lang["injections"]
+            widget.tree_tags = lang["tags"]
             parser = lang["parser"]
             widget.parser = parser
             widget.tree = parser.parse(text.encode())
@@ -630,7 +634,7 @@ def update_tags(widget: EventText):
             return ret
         if debug_it: start = time.time()
         if widget.language == None: init_treesitter(widget)
-        if widget.highlights:
+        if widget.tree:
             nodes = []
             tree_root = widget.tree.root_node
             if changes:
@@ -644,51 +648,56 @@ def update_tags(widget: EventText):
             
             def build_captures(language, highlights, nodes):
                 injections = []
-                for highlight in highlights:
-                    for node in nodes:
-                        if debug_it: q_start = time.time()
-                        captures = []
-                        try:
-                            query = tree_sitter.Query(language, highlight)
-                            qcaptures = tree_sitter.QueryCursor(query)
-                            for change in changes:
-                                qcaptures.set_byte_range(change.start_byte, change.end_byte)
-                                captures.append(qcaptures.captures(node))
-                            else:
-                                captures = [qcaptures.captures(node)]
-                        except tree_sitter.QueryError as e:
-                            printstdout(e)
-                            pass
+                query = tree_sitter.Query(language, highlights)
+                qcaptures = tree_sitter.QueryCursor(query)
+                for node in nodes:
+                    if debug_it: q_start = time.time()
+                    captures = []
+                    try:
+                        for change in changes:
+                            qcaptures.set_byte_range(change.start_byte, change.end_byte)
+                            captures.append(qcaptures.captures(node))
+                        else:
+                            captures = [qcaptures.captures(node)]
+                    except tree_sitter.QueryError as e:
+                        printstdout(e)
+                        pass
 
-                        if debug_it: printstdout(f"treesitter_query: {time.time()-q_start}")
-                        if debug_it: q_start = time.time()
-                        tid = lambda y: f"{y[0]+1}.{y[1]}"
-                        for capture in captures:
-                            if all([k in capture for k in ["injection.content", "injection.language"]]):
-                                for l in capture["injection.language"]:
-                                    icontent = capture["injection.content"]
-                                    tlang = get_treesitter_language(l.text.decode())
-                                    if tlang:
-                                        injections.append([tlang["language"], tlang["highlights"], icontent])
-                            else:
-                                for key, values in capture.items():
-                                    if not key in config["tags"]:
-                                        if debug_it: printstderr(f"treesitter_tags: missing key '{key}'")
-                                        continue
-                                    for info in values:
-                                        if not key in tags: tags[key] = [[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]]
-                                        else: tags[key].extend([[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]])
-                        # todo: it's not this simple to build more captures from the injections found in
-                        # ----: the current capture and it's slow. fix it, queue them.
-                        #for injection in injections: build_captures(*injection)
-                        if debug_it: printstdout(f"treesitter_spans: {time.time()-q_start}")
-            build_captures(widget.language, widget.highlights, nodes)
+                    if debug_it: printstdout(f"treesitter_query: {time.time()-q_start}")
+                    if debug_it: q_start = time.time()
+                    tid = lambda y: f"{y[0]+1}.{y[1]}"
+                    for capture in captures:
+                        if all([k in capture for k in ["injection.content", "injection.language"]]):
+                            for l in capture["injection.language"]:
+                                icontent = capture["injection.content"]
+                                tlang = get_treesitter_language(l.text.decode())
+                                if tlang:
+                                    injections.append([tlang["language"], tlang["highlights"], icontent])
+                        else:
+                            for key, values in capture.items():
+                                if not key in config["tags"]:
+                                    if debug_it: printstderr(f"treesitter_tags: missing key '{key}'")
+                                    continue
+                                for info in values:
+                                    if not key in tags: tags[key] = [[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]]
+                                    else: tags[key].extend([[tid(info.start_point), tid(info.end_point), info.start_byte, info.end_byte]])
+                        return injections
+                if debug_it: printstdout(f"treesitter_spans: {time.time()-q_start}")
+                
+            
+            if widget.highlights:
+                surprise_injection = build_captures(widget.language, widget.highlights, nodes)
+            # todo: make injections work.
+                # if surprise_injection:
+                #     breakpoint()
+            # if widget.injections:
+            #     injections = build_captures(widget.language, widget.injections, nodes)
+            #     for injection in injections:
+            #         build_captures(*injection)
 
 
         if debug_it: printstdout(f"treesitter: {time.time()-start}")
-
         if debug_it: start = time.time()
-
         for regex in config["regexs"]:
             byte_changes = [[c.start_byte-1, c.end_byte+1] for c in changes] if changes else [[0, sys.maxsize]]
             for change in byte_changes:
