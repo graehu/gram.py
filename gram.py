@@ -161,6 +161,9 @@ config = {
         "operator": { "foreground": "grey90" },
         "keyword": { "foreground": "hotpink1" },
         "constructor": { "foreground": "skyblue" },
+        "variable": { "foreground": "grey90" },
+        "label": { "foreground": "grey90" },
+        "delimiter": { "foreground": "grey90" },
         "none": {}
     }
 }
@@ -622,7 +625,7 @@ def printstderr(msg): print(msg, file=sys.__stdout__)
 
 def update_tags(widget: EventText):
     def internal_update(widget: EventText):
-        debug_it = False
+        debug_it = True
         if debug_it: printstdout(widget.name.center(64,"-"))
         text = widget.text
         tag_names = widget.tag_names()
@@ -650,8 +653,8 @@ def update_tags(widget: EventText):
                 injections = []
                 query = tree_sitter.Query(language, highlights)
                 qcaptures = tree_sitter.QueryCursor(query)
+                if debug_it: q_start = time.time()
                 for node in nodes:
-                    if debug_it: q_start = time.time()
                     captures = []
                     try:
                         for change in changes:
@@ -686,7 +689,10 @@ def update_tags(widget: EventText):
                 
             
             if widget.highlights:
-                surprise_injection = build_captures(widget.language, widget.highlights, nodes)
+                if widget.language == tree_sitter_langs["cpp"]["language"]:
+                    build_captures(tree_sitter_langs["c"]["language"], tree_sitter_langs["c"]["highlights"], nodes)
+                else:
+                    surprise_injection = build_captures(widget.language, widget.highlights, nodes)
             # todo: make injections work.
                 # if surprise_injection:
                 #     breakpoint()
