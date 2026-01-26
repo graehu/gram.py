@@ -178,6 +178,7 @@ short_paths = []
 tab_spaces = 4
 last_complist = ""
 current_file = ""
+allow_injections = False
 debug_output = False
 is_fullscreen = False
 editor = complist = root = None
@@ -630,7 +631,7 @@ def printstderr(msg): print(msg, file=sys.__stdout__)
 
 def update_tags(widget: EventText):
     def internal_update(widget: EventText):
-        debug_it = False
+        debug_it = debug_output
         if debug_it: printstdout(widget.name.center(64,"-"))
         text = widget.text
         tag_names = widget.tag_names()
@@ -657,7 +658,6 @@ def update_tags(widget: EventText):
             def build_captures(language, query, nodes):
                 query = tree_sitter.Query(language, query)
                 qcaptures = tree_sitter.QueryCursor(query)
-                if debug_it: q_start = time.time()
                 captures = []
                 for node in nodes:
                     try:
@@ -672,7 +672,6 @@ def update_tags(widget: EventText):
                 return captures
 
             def tag_captures(captures):
-                if debug_it: printstdout(f"treesitter_query: {time.time()-q_start}")
                 if debug_it: q_start = time.time()
                 # note: this tid function could be dodgy/wrong. why y[0]+1?
                 tid = lambda y: f"{y[0]+1}.{y[1]}"
@@ -688,21 +687,30 @@ def update_tags(widget: EventText):
                 
             
             if tree_lang := widget.tree_language:
+                if debug_it: q_start = time.time()
                 captures = []
                 if tree_lang.parent:
                     captures += build_captures(tree_lang.language, tree_lang.parent.highlights, nodes)
                 captures += build_captures(tree_lang.language, tree_lang.highlights, nodes)
-                tag_captures(captures)
-                
-            # todo: make injections work.
-                # if surprise_injection:
-                #     breakpoint()
-            # 
-            # if widget.tree_language.injections:
-            #     injections = build_captures(widget.tree_language.language, widget.tree_language.injections, nodes)
-            #     for injection in injections:
-            #         build_captures(*injection)
 
+                if tree_lang.injections and allow_injections:
+                    injections = build_captures(widget.tree_language.language, widget.tree_language.injections, nodes)
+                    for injection in injections:
+                        if not "injection.language" in injection:
+                            continue
+                        for node_lang in injection["injection.language"]:
+                            if inject_lang := get_treesitter_language(name=node_lang.text.decode()):
+                                if not "injection.content" in injection:
+                                    continue
+                                for fence in injection["injection.content"]:
+                                    if fence.type != "code_fence_content":
+                                        continue
+                                    if node_changed(node_lang, fence.parent):
+                                        if inject_lang.parent:
+                                            captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [fence])
+                                        captures += build_captures(inject_lang.language, inject_lang.highlights, [fence])
+                if debug_it: printstdout(f"treesitter_captures: {time.time()-q_start}")
+                tag_captures(captures)
 
         if debug_it: printstdout(f"treesitter: {time.time()-start}")
         if debug_it: start = time.time()
