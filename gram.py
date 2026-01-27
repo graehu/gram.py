@@ -706,9 +706,17 @@ def update_tags(widget: EventText):
                                     if fence.type != "code_fence_content":
                                         continue
                                     if node_changed(node_lang, fence.parent):
-                                        if inject_lang.parent:
-                                            captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [fence])
-                                        captures += build_captures(inject_lang.language, inject_lang.highlights, [fence])
+                                        # I think you need to reparse at this point, you can't just capture with the old tree
+                                        # it's not the same syntax, it doesn't make sense so:
+                                        inject_lang.parser.included_ranges = [fence.range]
+                                        new_tree = inject_lang.parser.parse(fence.text)
+                                        inject_lang.parser.included_ranges = None
+                                        # shouldn't need to reparse for parent languages, it's the same syntax with extras
+                                        # disabled until this works with just python.
+                                        # if inject_lang.parent:
+                                        #     captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [fence])
+                                        captures += build_captures(inject_lang.language, inject_lang.highlights, [new_tree.root_node])
+
                 if debug_it: printstdout(f"treesitter_captures: {time.time()-q_start}")
                 tag_captures(captures)
 
@@ -725,7 +733,7 @@ def update_tags(widget: EventText):
                         ti_end = f"1.0 + {sp_end}c"
                         if not k in tags: tags[k] = [[ti_start, ti_end, sp_start, sp_end]]
                         else: tags[k] += [[ti_start, ti_end, sp_start, sp_end]]
-        if debug_it: print(f"regex: {time.time()-start}", file=sys.__stdout__)
+        if debug_it: printstdout(f"regex: {time.time()-start}")
         
         if debug_it: start = time.time()
         for tag in tag_names:
@@ -734,11 +742,11 @@ def update_tags(widget: EventText):
         
         if changes:
             if debug_it:
-                print("changes: ", file=sys.__stdout__)
-                for change in changes: print(widget.get(f"1.0 +{change.start_byte}c", f"1.0 + {change.end_byte}c"), file=sys.__stdout__)
-                print("tags: ", file=sys.__stdout__)
+                printstdout("changes: ")
+                for change in changes: printstdout(widget.get(f"1.0 +{change.start_byte}c", f"1.0 + {change.end_byte}c"))
+                printstdout("tags: ")
                 for k,v in tags.items():
-                    if v: print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
+                    if v: printstdout(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}")
             new_tags = []
             for tag, spans in tags.items():
                 for change in changes:
@@ -748,18 +756,18 @@ def update_tags(widget: EventText):
             widget.changes = widget.changes[len(changes):]
         else:
             if debug_it:
-                print("full parse: ", file=sys.__stdout__)
-                print("tags: ", file=sys.__stdout__)
+                printstdout("full parse: ")
+                printstdout("tags: ")
                 for k,v in tags.items():
-                    if v: print(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}", file=sys.__stdout__)
+                    if v: printstdout(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}")
             widget.tag_queue = []
             for tag, spans in tags.items():
                 widget.tag_queue.append(lambda x=widget, y=tag: x.tag_remove(y, "1.0", "end-1c"))
                 for span in spans: widget.tag_queue.append(lambda x=widget,y=tag,z=span[:2]: x.tag_add(y, *z))
                     
-        if debug_it: print(f"tags: {time.time()-start}", file=sys.__stdout__)
-        if debug_it: print("done", file=sys.__stdout__)
-        if debug_it: print("".ljust(64,"-"), file=sys.__stdout__)
+        if debug_it: printstdout(f"tags: {time.time()-start}")
+        if debug_it: printstdout("done")
+        if debug_it: printstdout("".ljust(64,"-"))
     
     if not [x for x in threading.enumerate() if x.name == "update_tags"]:
         threading.Thread(target=internal_update, args=[widget], name="update_tags").start()
