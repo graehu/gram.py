@@ -22,15 +22,26 @@ The editor also allows for configuring the style by pressing (ctrl-m) and editin
 The Entry - `palette` - widget and Text - `editor` - widget `configure` funcs are passed the {"text"} dict directly.
 
 <!-- language injection tests -->
+
 ``` cpp
-int main() { return 0; }
+#include <iostream>
+int main()
+{
+    std::cout << "hello world" << std::endl;
+    return 0;
+}
 ```
 ``` python
-def main(): return 0
+def main():
+    print("hello world")
+    return 0
 ```
 ``` json
-{"hi":"world"}
+{
+    "hello": "world"
+}
 ```
 ``` toml
-[dict.key] hi = "world"
+[dict.key]
+hello = "world"
 ```

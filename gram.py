@@ -178,7 +178,6 @@ short_paths = []
 tab_spaces = 4
 last_complist = ""
 current_file = ""
-allow_injections = False
 debug_output = False
 is_fullscreen = False
 editor = complist = root = None
@@ -692,8 +691,9 @@ def update_tags(widget: EventText):
                 if tree_lang.parent:
                     captures += build_captures(tree_lang.language, tree_lang.parent.highlights, nodes)
                 captures += build_captures(tree_lang.language, tree_lang.highlights, nodes)
-
-                if tree_lang.injections and allow_injections:
+                # this kind of works now, but there's an issue where the injections don't have a language and I don't cache the new_trees below.
+                # so I can't easily reparse the content changes. Not sure a nice way to fix this atm.
+                if tree_lang.injections:
                     injections = build_captures(widget.tree_language.language, widget.tree_language.injections, nodes)
                     for injection in injections:
                         if not "injection.language" in injection:
@@ -706,15 +706,24 @@ def update_tags(widget: EventText):
                                     if fence.type != "code_fence_content":
                                         continue
                                     if node_changed(node_lang, fence.parent):
+                                        # maybe it's better to make a new parser here? safer multithreaded. would look like this:
+                                        # inj_parser = tree_sitter.Parser(inject_lang.language, included_ranges=[fence.range])
+                                        # new_tree = inj_parser.parse(tree_root.text)
+
+                                        # disabled until this works with just python.
                                         # I think you need to reparse at this point, you can't just capture with the old tree
                                         # it's not the same syntax, it doesn't make sense so:
+                                        if inject_lang.parent:
+                                            # shouldn't need to reparse for parent languages, it's the same syntax with extras
+                                            # don't like that this push pop style parser code is done twice in a row though.
+                                            inject_lang.parent.parser.included_ranges = [fence.range]
+                                            new_tree = inject_lang.parent.parser.parse(tree_root.text)
+                                            inject_lang.parent.parser.included_ranges = None
+                                            captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [new_tree.root_node])
+                                        
                                         inject_lang.parser.included_ranges = [fence.range]
-                                        new_tree = inject_lang.parser.parse(fence.text)
+                                        new_tree = inject_lang.parser.parse(tree_root.text)
                                         inject_lang.parser.included_ranges = None
-                                        # shouldn't need to reparse for parent languages, it's the same syntax with extras
-                                        # disabled until this works with just python.
-                                        # if inject_lang.parent:
-                                        #     captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [fence])
                                         captures += build_captures(inject_lang.language, inject_lang.highlights, [new_tree.root_node])
 
                 if debug_it: printstdout(f"treesitter_captures: {time.time()-q_start}")
