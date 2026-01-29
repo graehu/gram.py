@@ -128,7 +128,8 @@ config = {
     "tree-sitter": {"search_path": "~/github/"},
     "regexs": [r"(?P<brackets>[\[\]\{\}\(\)])"],
     "tags": {
-        "definition.class": {"foreground":"grey90"},
+        # I should probably do this per language? or make it so you can use a tree sitter theme?
+        "definition.class": {},
         "name": {"foreground":"grey90"},
         "string.special.key": {"foreground":"grey90"},
         "escape": {"foreground":"grey90"},
@@ -148,10 +149,10 @@ config = {
         "punctuation.delimiter": { "foreground": "grey90" },
         "punctuation.special": { "foreground": "skyblue" },
         "embedded": { "foreground": "grey90" },
-        "string.special": { "foreground": "limegreen" },
+        "string.special": { "foreground": "brown" },
         "tag": { "foreground": "blue" },
         "text.title": { "foreground": "skyblue" },
-        "text.literal": { "foreground": "limegreen" },
+        "text.literal": {  }, # this is too many things.
         "type.builtin": { "foreground": "skyblue" },
         "embedded": { "foreground": "grey" },
         "variable.builtin": { "foreground": "limegreen" },
