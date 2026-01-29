@@ -714,17 +714,12 @@ def update_tags(widget: EventText):
                                         # disabled until this works with just python.
                                         # I think you need to reparse at this point, you can't just capture with the old tree
                                         # it's not the same syntax, it doesn't make sense so:
-                                        if inject_lang.parent:
-                                            # shouldn't need to reparse for parent languages, it's the same syntax with extras
-                                            # don't like that this push pop style parser code is done twice in a row though.
-                                            inject_lang.parent.parser.included_ranges = [fence.range]
-                                            new_tree = inject_lang.parent.parser.parse(tree_root.text)
-                                            inject_lang.parent.parser.included_ranges = None
-                                            captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [new_tree.root_node])
-                                        
                                         inject_lang.parser.included_ranges = [fence.range]
                                         new_tree = inject_lang.parser.parse(tree_root.text)
                                         inject_lang.parser.included_ranges = None
+                                        if inject_lang.parent:
+                                            # shouldn't need to reparse for parent languages, it's the same syntax with extras
+                                            captures += build_captures(inject_lang.language, inject_lang.parent.highlights, [new_tree.root_node])
                                         captures += build_captures(inject_lang.language, inject_lang.highlights, [new_tree.root_node])
 
                 if debug_it: printstdout(f"treesitter_captures: {time.time()-q_start}")
@@ -733,6 +728,9 @@ def update_tags(widget: EventText):
         if debug_it: printstdout(f"treesitter: {time.time()-start}")
         if debug_it: start = time.time()
         for regex in config["regexs"]:
+            # todo: lock this whole function instead of doing this isinstance check.
+            # sometimes these are strings because the config is mid being regenerated.
+            if isinstance(regex, str): regex = re.compile(regex, re.S)
             byte_changes = [[c.start_byte-1, c.end_byte+1] for c in changes] if changes else [[0, sys.maxsize]]
             for change in byte_changes:
                 for match in regex.finditer(text, *change):
