@@ -164,7 +164,7 @@ config = {
         "operator": { "foreground": "grey90" },
         "keyword": { "foreground": "hotpink1" },
         "constructor": { "foreground": "skyblue" },
-        "variable": { "foreground": "grey90" },
+        "variable": { }, # this overrides function names.
         "label": { "foreground": "grey90" },
         "delimiter": { "foreground": "grey90" },
         "none": {}
