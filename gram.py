@@ -178,7 +178,7 @@ files = {}
 commands = {}
 op_args = {}
 glob_map = {}
-short_paths = []
+shorten_map = {}
 tab_spaces = 4
 last_complist = ""
 current_file = ""
@@ -193,6 +193,7 @@ work_lock = threading.Lock()
 gui_lock = threading.Lock()
 print_lock = threading.Lock()
 file_lock = threading.Lock()
+short_lock = threading.Lock()
 frame_time = 0
 _sess_dir = "/".join((_grampy_dir, str(start_time)))
 os.makedirs(_sess_dir)
@@ -274,19 +275,22 @@ def safe_print(*args, **kwargs): print_lock.acquire(); print(*args, **kwargs); p
 
 
 def shorten_paths(paths):
-    global short_paths
-    if not short_paths:
+    global shorten_map
+    short_lock.acquire()
+    path_set = frozenset(paths)
+    if not path_set in shorten_map:
         tails, tops = list(zip(*[os.path.split(p) for p in paths]))
         while len(set(tops)) != len(tops):
             tails, new_tops = list(zip(*[os.path.split(t) for t in tails]))
             tops = [os.path.join(t1, t2) for t1,t2 in zip(new_tops, tops)]
-        short_paths = tops
-    return short_paths
+        shorten_map[path_set] = tops
+    short_lock.release()
+    return shorten_map[path_set]
 
 
 def list_path(path):
     if path == os.curdir: paths = os.listdir(path)
-    else: paths = [os.path.join(path, p) for p in os.listdir(path)]
+    elif os.path.isdir(path): paths = [os.path.join(path, p) for p in os.listdir(path)]
     paths = [p+os.path.sep if os.path.isdir(p) else p for p in paths]
     return paths
 
@@ -415,8 +419,9 @@ def file_open(path, new_inst=False, read_only=False, background=False, tindex=No
     global current_file
     global editor
     global glob_map
-    global short_paths
-    short_paths = []
+    global shorten_map
+    # this makes me sad, we change the order of "files" every time we open, so we need to reevaluate shorten_map.
+    shorten_map.clear()
     glob_map = {}
     path = os.path.expanduser(path)
     path = os.path.abspath(path).replace("\\", "/")
@@ -906,20 +911,19 @@ def complist_insert(event=None, sel=-1):
 
 def cmd_open_matches(text):
     low_text = text.lower()
-    dirname, basename = os.path.split(low_text)
+    low_text_pattern = f"*{low_text}*"
+    _, basename = os.path.split(low_text)
     ret = []
     def file_filter(word):
         if len(low_text) >= len(word): return False
         low_word = word.lower()
-        base_word = low_word.replace(dirname, "")
-        return (basename in base_word) or (fnmatch.fnmatch(low_word, low_text))
+        return fnmatch.fnmatch(low_word, low_text_pattern)
     path = os.path.dirname(text)
     expanded = os.path.expanduser(path)
     if expanded and (os.path.exists(expanded)): ret = list_path(expanded)
     elif expanded and (not os.path.exists(expanded)): ret = []
     else: ret = list_path(os.curdir)
-    return sorted(filter(file_filter, ret), key=lambda x: x.lower().index(basename))
-
+    return sorted(filter(file_filter, ret), key=lambda x: x.lower().index(basename) if basename in x else 999)
 
 def cmd_glob_matches(text):
     ret = ["...finding files..."]
@@ -941,16 +945,19 @@ def cmd_glob_matches(text):
 
 
 def cmd_tab_matches(text):
-    low_text = text.lower()
-    dirname, basename = os.path.split(low_text)
-    def file_filter(word):
-        if len(low_text) >= len(word): return False
-        low_word = word.lower()
-        base_word = low_word.replace(dirname, "")
-        return (basename in base_word) or (fnmatch.fnmatch(low_word, low_text))
-    paths = [files[p]["path"] for p in files.keys()]
-    if paths: return sorted(filter(file_filter, shorten_paths(paths)), key=lambda x: x.lower().index(basename) if basename in x else 999)
-    return []
+    if text:
+        low_text = text.lower()
+        low_text_pattern = f"*{low_text}*"
+        _, basename = os.path.split(low_text)
+        def file_filter(word):
+            if len(low_text) >= len(word): return False
+            return (fnmatch.fnmatch(word.lower(), low_text_pattern))
+        paths = [files[p]["path"] for p in files.keys()]
+        if paths:
+            return sorted(filter(file_filter, shorten_paths(paths)), key=lambda x: x.lower().index(basename) if basename in x else 999)
+    else:
+        paths = [files[p]["path"] for p in files.keys()]
+        return shorten_paths(paths)
 
 
 def cmd_cache_matches(text):
@@ -993,9 +1000,10 @@ def cmd_open(text, new_instance=False):
 
 
 def cmd_tab(text, new_instance=False):
+    low_text_pattern = f"*{text.lower()}*"
     paths = [files[p]["path"] for p in files.keys()]
     paths = zip(paths, shorten_paths(paths))
-    path = next((x for x, y in paths if y.endswith(text)), "")
+    path = next((x for x, y in paths if fnmatch.fnmatch(y.lower(), low_text_pattern)), "")
     if path: file_open(path, new_instance)
     palette.delete(len("tab: "), tk.END)
 
