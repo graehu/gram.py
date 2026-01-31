@@ -9,6 +9,9 @@ except: pass
 class TreeLanguage():
     parent = tags = injections = highlights = language = parser = None
 
+class CompList(tk.Listbox):
+    matches = []
+
 class EventText(tk.Text):
     event_args = None
     text_config = {}
@@ -866,7 +869,8 @@ def complist_update_end(text, matches):
     if last_complist.endswith(text):
         complist.delete(0, tk.END)
         complist.place_forget()
-        for match in matches: complist.insert(tk.END, match)
+        complist.matches = matches
+        complist.insert(tk.END, *matches)
         size = complist.size()
         if size:
             width = len(max(matches, key=len))+1 if matches else 0
@@ -919,9 +923,12 @@ def cmd_glob_matches(text):
     ret = []
     if text not in glob_map:
         ret = glob.glob(text, recursive=True)
+        # print(f"glob matched {text}: {len(ret)} files")
         glob_map[text] = ret
 
-    else: ret = glob_map[text]
+    else:
+        ret = glob_map[text]
+        # print(f"glob found {text}: {len(ret)} files")
 
     if not ret or (len(ret) == 1 and ret[0] == text): ret = cmd_open_matches(text)
     return ret
@@ -963,7 +970,7 @@ def cmd_exec(text):
 def cmd_open(text, new_instance=False):
     if "*" in text:
         complist.place_forget()
-        args = complist.get(0, tk.END)
+        args = complist.matches
         msg = f"opening {len(args)} files matching: {text}"
         print("".ljust(len(msg), "-"))
         print(msg)
@@ -1076,7 +1083,7 @@ cmd_register("exec", lambda x: cmd_exec(x[0]), shortcut="<Control-e>")
 cmd_register("save as", lambda x: (save_file(x[0]), file_open(x[0])), cmd_open_matches, "<Control-S>")
 
 editor = EventText(root, wrap='none', undo=True)
-complist = tk.Listbox(root, relief='flat')
+complist = CompList(root, relief='flat')
 
 complist.bind("<Configure>", lambda _: complist_configure())
 complist.bind("<Double-Button-1>", complist_insert)
