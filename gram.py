@@ -916,24 +916,25 @@ def cmd_open_matches(text):
     path = os.path.dirname(text)
     expanded = os.path.expanduser(path)
     if expanded and (os.path.exists(expanded)): ret = list_path(expanded)
+    elif expanded and (not os.path.exists(expanded)): ret = []
     else: ret = list_path(os.curdir)
     return sorted(filter(file_filter, ret), key=lambda x: x.lower().index(basename))
 
 
 def cmd_glob_matches(text):
-    ret = ["...generating..."]
+    ret = ["...finding files..."]
     if text not in glob_map:
         glob_map[text] = ret
-        def glob_thread(text):
+        def glob_func(text):
             glob_lock.acquire()
             glob_map[text] = glob.glob(text, recursive=True)
             glob_lock.release()
-            if complist.matches == ["...generating..."]:
+            if complist.matches == ["...finding files..."]:
                 complist_update_end(text, glob_map[text])
 
-        globber = threading.Thread(target=glob_thread, args=[text], name="globbing")
-        globber.start()
-        globber.join(timeout=0.2)
+        glob_thread = threading.Thread(target=glob_func, args=[text], name="globbing")
+        glob_thread.start()
+        glob_thread.join(timeout=0.2)
     ret = glob_map[text]
     if not ret or (len(ret) == 1 and ret[0] == text): ret = cmd_open_matches(text)
     return ret
