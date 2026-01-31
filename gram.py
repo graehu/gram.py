@@ -188,6 +188,7 @@ editor = complist = root = None
 destroy_list = []
 start_time = time.time_ns()
 match_lock = threading.Lock()
+glob_lock = threading.Lock()
 work_lock = threading.Lock()
 gui_lock = threading.Lock()
 print_lock = threading.Lock()
@@ -196,7 +197,7 @@ frame_time = 0
 _sess_dir = "/".join((_grampy_dir, str(start_time)))
 os.makedirs(_sess_dir)
 stdout_path = "/".join((_sess_dir, "output.log"))
-sys.stdout = open(stdout_path, "w")
+sys.stdout = open(stdout_path, "w", encoding="utf-8")
 
 if not os.path.exists(conf_path): json.dump(config, open(conf_path, "w"), indent=4)
 conf_mtime = os.path.getmtime(conf_path)
@@ -920,16 +921,20 @@ def cmd_open_matches(text):
 
 
 def cmd_glob_matches(text):
-    ret = []
+    ret = ["...generating..."]
     if text not in glob_map:
-        ret = glob.glob(text, recursive=True)
-        # print(f"glob matched {text}: {len(ret)} files")
         glob_map[text] = ret
+        def glob_thread(text):
+            glob_lock.acquire()
+            glob_map[text] = glob.glob(text, recursive=True)
+            glob_lock.release()
+            if complist.matches == ["...generating..."]:
+                complist_update_end(text, glob_map[text])
 
-    else:
-        ret = glob_map[text]
-        # print(f"glob found {text}: {len(ret)} files")
-
+        globber = threading.Thread(target=glob_thread, args=[text], name="globbing")
+        globber.start()
+        globber.join(timeout=0.2)
+    ret = glob_map[text]
     if not ret or (len(ret) == 1 and ret[0] == text): ret = cmd_open_matches(text)
     return ret
 
@@ -1157,7 +1162,7 @@ def watch_file():
                     editor.allow_parse = False
                     editor.delete("1.0", tk.END)
                     editor.allow_parse = True
-                    editor.insert(tk.END, open(editor.path).read())
+                    editor.insert(tk.END, open(editor.path, encoding="utf-8").read())
                     if editor.compare(ins, ">=", end): editor.mark_set(tk.INSERT, tk.END)
                     else: editor.mark_set(tk.INSERT, ins)
                     if editor.read_only: editor.configure(state=tk.DISABLED)
@@ -1178,7 +1183,7 @@ def watch_file():
             do_update = True
         if do_update: update_tags(editor)
     except Exception as e:
-        print("watch: "+str(e), file=sys.stderr)
+        print(f"watch: {editor.path} {e}", file=sys.stderr)
     root.after(update_time, watch_file)
 
 watch_file()
