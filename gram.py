@@ -939,7 +939,7 @@ def cmd_glob_matches(text):
         glob_thread = threading.Thread(target=glob_func, args=[text], name="globbing")
         glob_thread.start()
         glob_thread.join(timeout=0.2)
-    ret = glob_map[text]
+    ret = glob_map[text] if text in glob_map else ret
     if not ret or (len(ret) == 1 and ret[0] == text): ret = cmd_open_matches(text)
     return ret
 
