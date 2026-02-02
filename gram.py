@@ -66,7 +66,8 @@ class EventText(tk.Text):
                         count = self.count("1.0", args[0])
                         start =  count[0] if count else 0
                         amount = len(args[1])
-                        edits = [start, start, start+amount, (start, start), (start, start), (start, start+amount)]
+                        row, column = [int(i) for i in self.index(f"1.0 + {start}c").split(".")]
+                        edits = [start, start, start+amount, (row-1, column), (row-1, column), (row-1, column+amount)]
                     elif command == "delete":
                         count = self.count("1.0", args[0])
                         start =  count[0] if count else 0
@@ -74,7 +75,8 @@ class EventText(tk.Text):
                             count = self.count("1.0", args[1])
                             amount = (count[0] if count else 0) - start
                         else: amount = 1
-                        edits = [start, start+amount, start, (start, start), (start, start+amount), (start, start)]
+                        row, column = [int(i) for i in self.index(f"1.0 + {start}c").split(".")]
+                        edits = [start, start+amount, start, (row-1, column), (row-1, column+amount), (row-1, column)]
                     if command in ["insert", "delete"]:
                         count = self.count("1.0", f"{args[0]}")
                         fallback.start_byte = count[0] if count else 0
@@ -97,6 +99,8 @@ class EventText(tk.Text):
                 # todo: instead of checking if allow edits, maybe only parse on insert?
                 if edits and self.allow_parse:
                     new_tree = self.tree_language.parser.parse(self.text.encode(), self.tree)
+                    # this produces nonsense for the cpp parser.
+                    # there's noticable slowdown writing c++ due to it.
                     changes = self.tree.changed_ranges(new_tree)
                     if not changes: changes.append(fallback)
                     self.changes += changes
@@ -642,6 +646,7 @@ def update_tags(widget: EventText):
     def internal_update(widget: EventText):
         debug_it = debug_output
         if debug_it: printstdout(widget.name.center(64,"-"))
+        if debug_it: total_start = time.time()
         text = widget.text
         tag_names = widget.tag_names()
         changes = widget.changes
@@ -650,7 +655,7 @@ def update_tags(widget: EventText):
             ret = change.start_byte <= node.start_byte and change.end_byte >= node.end_byte
             ret = ret or change.start_byte >= node.start_byte and change.end_byte <= node.end_byte
             return ret
-        if debug_it: start = time.time()
+        if debug_it: treesitter_start = time.time()
         if widget.tree_language == None: init_treesitter(widget)
         if widget.tree:
             nodes = []
@@ -734,8 +739,8 @@ def update_tags(widget: EventText):
                 if debug_it: printstdout(f"treesitter_captures: {time.time()-q_start}")
                 tag_captures(captures)
 
-        if debug_it: printstdout(f"treesitter: {time.time()-start}")
-        if debug_it: start = time.time()
+        if debug_it: printstdout(f"treesitter: {time.time()-treesitter_start}")
+        if debug_it: regex_start = time.time()
         for regex in config["regexs"]:
             # todo: lock this whole function instead of doing this isinstance check.
             # sometimes these are strings because the config is mid being regenerated.
@@ -750,9 +755,9 @@ def update_tags(widget: EventText):
                         ti_end = f"1.0 + {sp_end}c"
                         if not k in tags: tags[k] = [[ti_start, ti_end, sp_start, sp_end]]
                         else: tags[k] += [[ti_start, ti_end, sp_start, sp_end]]
-        if debug_it: printstdout(f"regex: {time.time()-start}")
+        if debug_it: printstdout(f"regex: {time.time()-regex_start}")
         
-        if debug_it: start = time.time()
+        if debug_it: tags_start = time.time()
         for tag in tag_names:
             if tag in [tk.SEL]: continue
             if not tag in tags: tags[tag] = []
@@ -782,7 +787,8 @@ def update_tags(widget: EventText):
                 widget.tag_queue.append(lambda x=widget, y=tag: x.tag_remove(y, "1.0", "end-1c"))
                 for span in spans: widget.tag_queue.append(lambda x=widget,y=tag,z=span[:2]: x.tag_add(y, *z))
                     
-        if debug_it: printstdout(f"tags: {time.time()-start}")
+        if debug_it: printstdout(f"tags: {time.time()-tags_start}")
+        if debug_it: printstdout(f"total: {time.time()-total_start}")
         if debug_it: printstdout("done")
         if debug_it: printstdout("".ljust(64,"-"))
     
@@ -925,14 +931,21 @@ def cmd_open_matches(text):
     else: ret = list_path(os.curdir)
     return sorted(filter(file_filter, ret), key=lambda x: x.lower().index(basename) if basename in x else 999)
 
+
 def cmd_glob_matches(text):
     ret = ["...finding files..."]
     if text not in glob_map:
         glob_map[text] = ret
         def glob_func(text):
+            # note: it looks like it would be faster to pull the glob outside the lock, but it isn't.
+            # ----: probably due to disk caching/contention.
+            # glob_time = time.time()
             glob_lock.acquire()
             glob_map[text] = glob.glob(text, recursive=True)
             glob_lock.release()
+            # glob_time = time.time()-glob_time
+            # if glob_time > 0.2: print(f"long glob {text}: {glob_time}")
+
             if complist.matches == ["...finding files..."]:
                 complist_update_end(text, glob_map[text])
 
