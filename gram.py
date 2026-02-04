@@ -665,11 +665,13 @@ def update_tags(widget: EventText):
                     for child in tree_root.children:
                         if node_changed(child, change):
                             nodes.append(child)
-                            # if debug_it: printstdout(f"node: {child}")
+                            if debug_it: printstdout(f"node: {child}")
             else:
                 nodes.append(tree_root)
             
+
             def build_captures(language, query, nodes):
+                nonlocal changes
                 query = tree_sitter.Query(language, query)
                 qcaptures = tree_sitter.QueryCursor(query)
                 captures = []
@@ -679,7 +681,8 @@ def update_tags(widget: EventText):
                             qcaptures.set_byte_range(change.start_byte, change.end_byte)
                             captures.append(qcaptures.captures(node))
                         else:
-                            captures = [qcaptures.captures(node)]
+                            qcaptures.set_byte_range(node.start_byte, node.end_byte)
+                            captures.append(qcaptures.captures(node))
                     except tree_sitter.QueryError as e:
                         printstdout(e)
                         pass
@@ -714,6 +717,7 @@ def update_tags(widget: EventText):
                         if not "injection.language" in injection:
                             continue
                         for node_lang in injection["injection.language"]:
+                            if not node_lang.text: continue
                             if inject_lang := get_treesitter_language(name=node_lang.text.decode()):
                                 if not "injection.content" in injection:
                                     continue
