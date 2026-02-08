@@ -93,18 +93,21 @@ class EventText(tk.Text):
 
             if debug_output: print(cmd, file=sys.stdout)
             if command in ("insert", "delete", "replace"):
-                if edits: self.tree.edit(*edits)
-                
                 self.text = self.get("1.0", "end - 1c")
                 # todo: instead of checking if allow edits, maybe only parse on insert?
                 if edits and self.allow_parse:
-                    new_tree = self.tree_language.parser.parse(self.text.encode(), self.tree)
-                    # this produces nonsense for the cpp parser.
-                    # there's noticable slowdown writing c++ due to it.
-                    changes = self.tree.changed_ranges(new_tree)
-                    if not changes: changes.append(fallback)
-                    self.changes += changes
-                    self.tree = new_tree
+                    def reparse(widget, edits):
+                        widget.lock.acquire()
+                        self.tree.edit(*edits)
+                        new_tree = self.tree_language.parser.parse(widget.text.encode(), widget.tree)
+                        # this produces nonsense for the cpp parser.
+                        # there's noticable slowdown writing c++ due to it.
+                        changes = widget.tree.changed_ranges(new_tree)
+                        if not changes: changes.append(fallback)
+                        widget.changes += changes
+                        widget.tree = new_tree
+                        widget.lock.release()
+                    threading.Thread(target=reparse, args=[self, edits]).start()
                 
                 self.event_args = args
                 self.event_generate("<<TextModified>>")
@@ -206,7 +209,7 @@ sys.stdout = open(stdout_path, "w", encoding="utf-8")
 
 if not os.path.exists(conf_path): json.dump(config, open(conf_path, "w"), indent=4)
 conf_mtime = os.path.getmtime(conf_path)
-br_pat = re.compile(r"}|{|\.|:|/|\"|\\|\+|\-| |\(|\)|\[|\]")
+br_pat = re.compile(r"}|{|\.|:|/|\"|\\|\+|\-| |\(|\)|\[|\]|;")
 
 def is_main_thread(): return threading.current_thread() is threading.main_thread()
 
@@ -644,6 +647,10 @@ def printstderr(msg): print(msg, file=sys.__stdout__)
 
 def update_tags(widget: EventText):
     def internal_update(widget: EventText):
+        # note: cpp often makes this whole thread take 0.01s.
+        # ----: python threads hault mainthread progression, so immediately sleeping.
+        # ----: not sure why 0.01 is correct, lines up with the cost of the function though.
+        time.sleep(0.01)
         debug_it = debug_output
         if debug_it: printstdout(widget.name.center(64,"-"))
         if debug_it: total_start = time.time()
@@ -708,6 +715,8 @@ def update_tags(widget: EventText):
                 captures = []
                 if tree_lang.parent:
                     captures += build_captures(tree_lang.language, tree_lang.parent.highlights, nodes)
+                # note: for cpp, build_captures is extremely slow. not sure why.
+                # ----: for c, it takes 0.01s~ for c++ it's 0.1s~. Like I'm using the highlight query wrong somehow?
                 captures += build_captures(tree_lang.language, tree_lang.highlights, nodes)
                 # this kind of works now, but there's an issue where the injections don't have a language and I don't cache the new_trees below.
                 # so I can't easily reparse the content changes. Not sure a nice way to fix this atm.
@@ -729,7 +738,6 @@ def update_tags(widget: EventText):
                                         # inj_parser = tree_sitter.Parser(inject_lang.language, included_ranges=[fence.range])
                                         # new_tree = inj_parser.parse(tree_root.text)
 
-                                        # disabled until this works with just python.
                                         # I think you need to reparse at this point, you can't just capture with the old tree
                                         # it's not the same syntax, it doesn't make sense so:
                                         inject_lang.parser.included_ranges = [fence.range]
@@ -772,13 +780,22 @@ def update_tags(widget: EventText):
                 for change in changes: printstdout(widget.get(f"1.0 +{change.start_byte}c", f"1.0 + {change.end_byte}c"))
                 printstdout("tags: ")
                 for k,v in tags.items():
-                    if v: printstdout(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'}")
+                    if v: printstdout(f"\t{k}: {len(v)}  --  {config['tags'][k] if k in config['tags'] else 'missing'} {tags[k]}")
             new_tags = []
             for tag, spans in tags.items():
                 for change in changes:
-                    new_tags.append(lambda x=widget, y=tag, z=change: x.tag_remove(y, f"1.0 + {z.start_byte}c", f"1.0 + {z.end_byte}c"))
-                for span in spans: new_tags.append(lambda x=widget,y=tag,z=span[:2]: x.tag_add(y, *z))
-            widget.tag_queue = [*new_tags, *widget.tag_queue]
+                    # lambdas may have been faster.
+                    def remove_tags(x=widget, y=tag, z=change):
+                        # printstdout(f"rem {y}: 1.0 + {z.start_byte}c to 1.0 + {z.end_byte}c")
+                        x.tag_remove(y, f"1.0 + {z.start_byte}c", f"1.0 + {z.end_byte}c")
+                    new_tags.append(remove_tags)
+                for span in spans:
+                    def add_tags(x=widget,y=tag,z=span[:2]):
+                        # zstr = " to ".join(z)
+                        # printstdout(f"add {y}: {zstr}")
+                        x.tag_add(y, *z)
+                    new_tags.append(add_tags)
+            widget.tag_queue = [*widget.tag_queue, *new_tags]
             widget.changes = widget.changes[len(changes):]
         else:
             if debug_it:
@@ -1176,7 +1193,8 @@ def watch_file():
         if destroy_list: dest = destroy_list.pop(); dest.destroy()
         if editor.edits and not editor.edit_modified(): editor.edits = False; update_title(editor)
         if editor.changes: update_tags(editor)
-        while editor.tag_queue and (time.time()-frame_time < 0.01): editor.tag_queue.pop(0)()
+        while editor.tag_queue and (time.time()-frame_time < 0.01):
+            editor.tag_queue.pop(0)()
 
         if os.path.isfile(editor.path):
             mtime = os.path.getmtime(editor.path)
