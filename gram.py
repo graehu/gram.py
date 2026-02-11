@@ -874,6 +874,14 @@ def palette_select_all(event=None):
     else: palette.selection_range(0, tk.END)
     return "break"
 
+
+def palette_down(_):
+    if complist.size():
+        complist.focus_set()
+        complist.selection_set(0)
+        complist.activate(0)
+    return ""
+
 # -----------------------------------------------------
 
 def complist_update_start(text, force = False):
@@ -1159,7 +1167,7 @@ palette.bind("<Control-BackSpace>", lambda x: (delete_to_break(palette), palette
 palette.bind("<Control-Delete>", lambda x: (delete_to_break(palette, False), palette_cus()))
 palette.bind("<Escape>", lambda x: editor.focus_set())
 palette.bind("<Tab>", lambda x: complist_insert(None, 0))
-palette.bind("<Down>", lambda x: (complist.focus_set(), complist.select_set(0)) if complist.size() else "")
+palette.bind("<Down>", palette_down)
 palette.configure(borderwidth=0)
 palette.pack(fill="x")
 apply_config(editor)
