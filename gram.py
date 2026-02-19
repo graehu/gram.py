@@ -54,6 +54,10 @@ class EventText(tk.Text):
     class Range:
         start_byte=0
         end_byte=0
+    def force_reparse(self):
+        self.tree = self.tree_language.parser.parse(self.text.encode())
+        update_tags(self)
+        pass
     def _proxy(self, command, *args):
         cmd = (self._orig, command) + args
         result = ""
@@ -1223,6 +1227,8 @@ def watch_file():
                     editor.extern_edits = False
                     do_update = True
                     update_title(editor)
+                    root.after(15, lambda x=editor: x.force_reparse())
+                    root.after(20, lambda x=editor: x.force_reparse())
                 elif not editor.extern_edits:
                     editor.extern_edits = True
                     root.bell()
