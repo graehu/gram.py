@@ -915,7 +915,8 @@ def complist_update_end(text, matches):
         complist.delete(0, tk.END)
         complist.place_forget()
         complist.matches = matches
-        complist.insert(tk.END, *matches)
+        # note: limited to 50 because more crashes tcl for some reason.
+        complist.insert(tk.END, *complist.matches[:50])
         size = complist.size()
         if size:
             width = len(max(matches, key=len))+1 if matches else 0
