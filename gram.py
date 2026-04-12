@@ -12,6 +12,138 @@ class TreeLanguage():
 class CompList(tk.Listbox):
     matches = []
 
+class LSP():
+    lsp_proc = None
+    lsp_files = {}
+    lsp_id = 1
+    lsp_responses = {}
+    lsp_completion_ids = {}
+    def __init__(self, lspname, *args, **kwargs):
+        self.lsp_proc = subprocess.Popen(
+            [lspname],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        threading.Thread(target=LSP.lsp_read, args=[self], daemon=True).start()
+        time.sleep(0.1)
+        #print("lsp send initialize")
+        self.lsp_send({
+            "jsonrpc": "2.0",
+            "id": self.lsp_id,
+            "method": "initialize",
+            "params": {
+                "processId": None,
+                "rootUri": None,
+                "capabilities": {}
+            }
+        })
+        # todo: do a callback or something instead of this wait.
+        time.sleep(0.1)
+        #print("lsp send initialised")
+        self.lsp_send({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        })
+
+    def lsp_send(self, msg):
+        body = json.dumps(msg)
+        #print("SEND:", msg)
+        body_bytes = body.encode("utf-8")
+        header = f"Content-Length: {len(body_bytes)}\r\n\r\n".encode("ascii")
+        self.lsp_proc.stdin.write(header + body_bytes)
+        self.lsp_proc.stdin.flush()
+
+    def lsp_read(self):
+        while True:
+            msg = self.lsp_read_message()
+            if msg is None:
+                break
+            #print("RECV:", msg)
+            if "id" in msg:
+                self.lsp_responses[int(msg["id"])] = msg
+
+    def lsp_read_message(self):
+        headers = b""
+        while b"\r\n\r\n" not in headers:
+            chunk = self.lsp_proc.stdout.read(1)
+            if not chunk:
+                return None
+            headers += chunk
+
+        header_text = headers.decode()
+        length = 0
+        for line in header_text.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                length = int(line.split(":")[1].strip())
+
+        body = self.lsp_proc.stdout.read(length)
+        return json.loads(body.decode())
+
+    def lsp_open(self, path, text):
+        self.lsp_files[path] = [f"file://{path}", 1]
+        #(f"lsp opening file://{path} len {len(text)}")
+        self.lsp_send({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": f"file://{path}",
+                    "languageId": "python",
+                    "version": 1,
+                    "text": text
+                }
+            }
+        })
+
+    def lsp_change(self, path, text):
+        uri, version = self.lsp_files[path]
+        version = version + 1
+        self.lsp_completion_ids = {}
+        self.lsp_send({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {
+                "uri": uri,
+                "version": version
+                },
+                "contentChanges": [
+                {
+                    "text": text
+                }]
+            }
+        })
+        self.lsp_files[path] = [uri, version]
+
+    def lsp_complete(self, path, line, character):
+        uri, version = self.lsp_files[path]
+        #(f"completing {line}.{character} of {uri}")
+        if (line, character) in self.lsp_completion_ids:
+            return self.lsp_completion_ids[(line, character)]
+        self.lsp_id = self.lsp_id + 1
+        self.lsp_send({
+            "jsonrpc": "2.0",
+            "id": self.lsp_id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": uri},
+                "position": {"line": line-1, "character": character}
+            }
+        })
+        self.lsp_completion_ids[(line, character)] = self.lsp_id
+        return self.lsp_id
+    
+    def lsp_get_completion(self, id):
+        #print(self.lsp_responses[id])
+        if id in self.lsp_responses:
+            completion = self.lsp_responses[id]
+            items = completion["result"]["items"]
+            items = [i["insertText"] for i in items]
+            return items
+        return []
+
 class EventText(tk.Text):
     event_args = None
     text_config = {}
@@ -23,6 +155,7 @@ class EventText(tk.Text):
     cursor_label = None
     text = tree_language = tree = changes = None
     lock = None
+    lsp = None
     def __init__(self, *args, **kwargs):
         tk.Text.__init__(self, *args, **kwargs)
         self._orig = self._w + "_orig"
@@ -51,6 +184,7 @@ class EventText(tk.Text):
         self.changes = []
         self.tag_queue = []
         self.allow_parse = True
+    
     class Range:
         start_byte=0
         end_byte=0
@@ -110,6 +244,7 @@ class EventText(tk.Text):
                         if not changes: changes.append(fallback)
                         widget.changes += changes
                         widget.tree = new_tree
+                        if widget.lsp: widget.lsp.lsp_change(widget.path, widget.text)
                         widget.lock.release()
                     threading.Thread(target=reparse, args=[self, edits]).start()
                 
@@ -196,6 +331,7 @@ current_file = ""
 debug_output = False
 is_fullscreen = False
 editor = complist = root = None
+python_lsp = LSP("pylsp")
 destroy_list = []
 start_time = time.time_ns()
 match_lock = threading.Lock()
@@ -348,8 +484,12 @@ def file_create(path, name, ext, mtime, read_only, lines):
         widget.path = path
         widget.name = name
         widget.ext = ext
+        text = "".join(lines)
+        if ext == ".py":
+            widget.lsp = python_lsp
+            widget.lsp.lsp_open(path, text)
         widget.mtime = mtime
-        widget.insert(tk.END, "".join(lines))
+        widget.insert(tk.END, text)
         if read_only: widget.mark_set(tk.INSERT, tk.END)
         else: widget.mark_set(tk.INSERT, "1.0")
         widget.edit_reset()
@@ -527,6 +667,14 @@ def select_all(widget):
     widget.mark_set("tk::anchor1", tk.END)
     widget.see(tk.INSERT)
     return "break"
+
+
+def complete_text(widget, text, backwards = False):
+    text = text.replace("complete: ", "")
+    widget.insert(tk.INSERT, text)
+    widget.focus_set()
+    return "break"
+
 
 
 def find_text(widget, text, backwards = False):
@@ -949,6 +1097,19 @@ def complist_insert(event=None, sel=-1):
 
 # -----------------------------------------------------
 
+
+def cmd_complete_matches(widget, text):
+    ret = []
+    # the blow wait sucks, a call back would be nicer.
+    line, char = widget.index(tk.INSERT).split(".")
+    needs_wait = not (int(line), int(char)) in widget.lsp.lsp_completion_ids
+    id = widget.lsp.lsp_complete(widget.path, int(line), int(char))
+    if needs_wait: time.sleep(.5)
+    ret = widget.lsp.lsp_get_completion(id)
+    ret = [r for r in ret if text in r]
+    return ret
+
+
 def cmd_open_matches(text):
     low_text = text.lower()
     low_text_pattern = f"*{low_text}*"
@@ -1136,8 +1297,9 @@ root.bind("<Control-p>", lambda _: show_stdout())
 
 cmd_register("open", lambda x: cmd_open(*x) , cmd_glob_matches, "<Control-o>")
 cmd_register("tab", lambda x: cmd_tab(*x), cmd_tab_matches, "<Control-t>")
-cmd_register("cache", lambda x: cmd_cache(*x), cmd_cache_matches, "<Control-k>")
 
+cmd_register("complete", lambda x: complete_text(editor, *x), lambda x: cmd_complete_matches(editor, x), "<Control-space>")
+cmd_register("cache", lambda x: cmd_cache(*x), cmd_cache_matches, "<Control-k>")
 cmd_register("find", lambda x: find_text(editor, *x), shortcut="<Control-f>")
 cmd_register("find all", lambda x: find_all(x[0]), shortcut="<Control-j>")
 cmd_register("exec", lambda x: cmd_exec(x[0]), shortcut="<Control-e>")
